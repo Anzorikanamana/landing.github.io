@@ -1,0 +1,371 @@
+/**
+ * Created by артём on 06.06.2017.
+ */
+;(function (w) {
+
+    var imageBlocks = $(".blk_image_ext")
+            .has($(".img_container")
+                .find("img:first")
+            )
+            .filter(function () {
+                //пропускаем пустые блоки ( в которые не загружена картинка )
+                if (
+                    $(this).has(".blk_image_data_wrap.empty").length ||
+                    //также пропускаем фейковую зафиксенную секцию
+                    $(this).closest(".blk_section").hasClass("fixed_fake") ||
+                    //пропускаем свг
+                    ($(this).find(".blk_image_data_wrap.ms__svg-img").length)
+                ) {
+                    return false
+                }
+                return true
+            })
+        , sections = $(".blk_section.bg_type_image .section-image").filter(function () {
+            var bgUrl = cleanBgUrl($(this).css("background-image"));
+            //svg пропускаем
+            return bgUrl.split('.').pop() != 'svg';
+        })
+        , wnd = $(w)
+        , imgId_attrs = {}
+        , adaptMan = {}
+        , paddingToStartLoad = 100
+        , allObjects
+        , currentObjectKey
+        , isCheckPosition = false
+        ;
+
+    function cleanBgUrl (url) {
+        var res = url;
+        if ('undefined' !== typeof url && null!==url){
+            res = url
+                .replace(/^\s+/,'')
+                .replace(/\s+$/,'')
+                .replace(/^url\s*\(\s*/,'')
+                .replace(/\s*\)\s*/,'')
+                .replace(/^[\s'"]+/g, '')
+                .replace(/[\s'"]+$/g, '')
+                .replace(/\?\d+$/g, '');
+        }
+
+        return res;
+    }
+
+    //function setCachedImages () {
+    //    allObjects.each(function (key) {
+    //        var imageSrc = $(this).css('background-image')
+    //            , cleanImgSrc = removeUrlApiStr(cleanBgUrl(imageSrc));
+    //
+    //        if (hasImageInCache(cleanImgSrc) && false){
+    //            // если картинка есть в кеше - устанавливаем её
+    //            $(this).css('background-image', 'url("' + removeUrlApiStr(cleanImgSrc) + '")');
+    //            //и удаляем из набора блоков, которые надо конвертнуть
+    //            delete allObjects[key];
+    //            allObjects.length = allObjects.length - 1;
+    //        }
+    //    })
+    //}
+
+    function init() {
+        var temp = {}
+        allObjects = $(sections).add(imageBlocks);
+        allObjects.each(function () {
+            temp[$(this).attr('id')] = $(this)
+        })
+        if (!$.isEmptyObject(temp)) {
+            allObjects = temp;
+        }
+        adaptMan = w.adapterManager;
+    }
+
+
+    function __run (blk) {
+        setTimeout(function () {
+            if(blk.hasClass('section-image')) {
+                loadSection(blk)
+            } else {
+                load(blk)
+            }
+        }, 1);
+    }
+
+    function checkPosition ($blk, key) {
+        var blk = $blk
+            , minA, maxA, wndMin, wndMax;
+
+        currentObjectKey = key;
+
+        minA =  blk.offset().top;
+        maxA =  minA + parseInt(blk.css("height"));
+        wndMin = wnd.scrollTop();
+        wndMax = wndMin + w.innerHeight;
+
+        if (
+            ( wndMin - paddingToStartLoad < maxA  && maxA < wndMax + 100 )||
+            ( wndMin < minA && maxA < wndMax ) ||
+            ( wndMax + paddingToStartLoad > minA && maxA > wndMax )
+        ) {
+            return true;
+        }
+    }
+
+    function imageFade(isCheckPosition) {
+        if (Object.keys(allObjects).length && !adaptMan.processResizing) {
+
+            $.each(allObjects, function (key, block) {
+                if (isCheckPosition) {
+                    if (checkPosition($(this), key)) {
+                        __run($(this));
+                        delete allObjects[key]
+                    }
+                } else {
+                    __run($(this), key);
+                    delete allObjects[key]
+                }
+            })
+        }
+    }
+
+    function hasImageInCache( src ) {
+        var img = new Image();
+        img.src = src;
+
+        return img.complete;
+    }
+
+    function removeUrlApiStr (src) {
+        return src.replace(/(.*\/\w\/\w\/\w\/\w{32}).*(\.(png|jpg|jpeg))/, "$1$2");
+    }
+
+    function loadSection ($section) {
+        var  imageSrc = $section.css('background-image')
+            , cleanImgSrc = removeUrlApiStr(cleanBgUrl(imageSrc))
+            , imgProps = $section.prop('attributes')
+            , isInCache = hasImageInCache(cleanImgSrc)
+            , animationTime = 'slow'
+            ;
+
+        if ('none' == cleanImgSrc ) {
+            return;
+        }
+
+        if (isInCache) {
+            // если картинка есть в кеше - устанавливаем её
+            $section.css('background-image', 'url("' + removeUrlApiStr(cleanImgSrc) + '")');
+            //и выходим из ф-ии
+            return;
+        }
+
+        wrapByAbsoluteContainer($section);
+        $("<img />")
+            .attr("src", cleanImgSrc)
+            .one('load', function () {
+                var resultImg = $("<div></div>");
+                $section.css('z-index', -1);
+                $.each(imgProps, function() {
+                    resultImg.attr(this.name, this.value);
+                });
+                resultImg.hide();
+                resultImg.css("z-index", 0);
+                resultImg.css('background-image', 'url("' + cleanImgSrc + '")');
+                resultImg.insertAfter($section);
+
+                resultImg.fadeIn(animationTime, function () {
+                    resultImg.unwrap();
+                    $section.remove();
+                })
+            })
+
+    }
+
+    function load ($blk) {
+
+
+        var $img = $blk.find(".img_container").find("img:first")
+            , imgProps = $img.prop('attributes')
+            , imgSrc =  imgProps['src'].value
+            , srcToLoad = imgSrc.replace(/(\/-\/resize\/)\d+/, "$1" + parseInt($img.attr('medium-style-w')))
+            , imgWidth
+            , imgHeight
+            , blkId = $blk.attr('id')
+        //, imgHeight = parseInt($(this).css('height'))
+            , $badImage = $img
+            , $goodImage
+            , newImage
+            , mediumStyleWrapper
+            , isInCache = hasImageInCache(srcToLoad)
+            , animationTime = 'slow'
+            ;
+
+
+        if (isInCache) {
+            $img.attr('src', srcToLoad);
+            $img.removeAttr('bad-image');
+            updateSlickClonedImages($img, srcToLoad);
+            return;
+        }
+
+        imgId_attrs[blkId] = {
+            origProps: {},
+            customProps: {}
+        };
+
+        imgWidth = $blk.css("width");
+        imgHeight = $blk.css("height");
+
+        $.each(imgProps, function () {
+            imgId_attrs[blkId].origProps[this.name] = this.value
+        });
+        imgId_attrs[blkId].customProps.imgWidth = imgWidth;
+        imgId_attrs[blkId].customProps.imgHeight = imgHeight;
+
+
+        if (imgWidth && imgSrc) {
+
+            imgSrc = imgSrc.replace(/(\/-\/resize\/)\d+/, "$1" + parseInt($badImage.attr('medium-style-w')));
+
+            newImage = $("<img data-blk-id='" + blkId + "'/>").attr("src", imgSrc)
+                .one('load', function () {
+                    var _imgId = $(this).attr('data-blk-id');
+                    $goodImage = $(this);
+
+                    wrapByRelativeContainer(_imgId);
+                    makeImageAbsolute($badImage);
+                    $badImage.css('z-index', -1);
+                    $goodImage.attr("style", imgId_attrs[_imgId].origProps.style);
+                    //$goodImage.css('max-height', '100%');
+                    $goodImage.css('z-index', 2);
+                    $goodImage.css('display', 'none');
+                    $goodImage.css({
+                        'z-index': 2,
+                        display: 'none',
+                        'height': $badImage.css('height'),
+                        width: $badImage.css('width')
+                    });
+                    mediumStyleWrapper.append($goodImage);
+                    makeImageAbsolute($goodImage);
+                    console.log("ANIMATION TIME IS " + animationTime);
+                    $goodImage.fadeIn(animationTime, function ( ) {
+
+                        var imgAttrs = imgId_attrs[_imgId].origProps
+                            , resultImg = $(this)
+                            , skipAttrs = ['src','bad-image']
+                            ;
+
+                        for (var attrName in imgAttrs) {
+
+                            if (attrName == 'style') {
+                                setStyle(imgAttrs[attrName], resultImg)
+                                skipAttrs.push('style');
+                            }
+
+                            if (skipAttrs.indexOf(attrName) !== -1) {
+                                continue;
+                            }
+                            resultImg.attr(attrName, imgAttrs[attrName])
+                        }
+                        //if (adaptMan.isPC()) {
+                        //    resultImg.css("height", resultImg.attr("pc-bad-img-height"));
+                        //} else {
+                        //    //mobile
+                        //    resultImg.css("height", resultImg.parent().height() + "px")
+                        //}
+
+                        updateSlickClonedImages(resultImg, imgSrc)
+
+
+                        resultImg.unwrap();
+                        $badImage.remove();
+
+                    })
+                })
+        }
+
+        function wrapByRelativeContainer (blkId) {
+            var $origImage = $("#" + blkId).find('.img_container img:first')
+                , imgAttrs = imgId_attrs[blkId]
+                , customProps = imgAttrs.customProps
+                , imgWidth = $origImage.css("width")
+                , imgHeight = $origImage.css("height")
+
+            $origImage.wrap("<div class='ms__wrapper'></div>");
+            mediumStyleWrapper = $origImage.parent(".ms__wrapper");
+            mediumStyleWrapper.css({
+                position: "relative",
+                width: imgWidth,
+                height: imgHeight
+            });
+
+        }
+
+        function makeImageAbsolute ($img) {
+            $img.css({
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0
+            })
+        }
+
+    }
+
+    function renderAll () {
+        imageBlocks.each(function(index, img) {
+            load($(img));
+        });
+        imageBlocks = [];
+    }
+
+    function wrapByAbsoluteContainer (blk) {
+        blk.wrap("<div class='ms__wrapper_abs'></div>");
+    }
+
+    function setStyle (style, resultImg) {
+        style = style.replace(/\s+/g, '');
+        var allStyleArr = style.split(";")
+
+        allStyleArr.forEach(function (styleVal) {
+            var styleArr = styleVal.split(":");
+            if (styleArr[0] == 'height' ||
+                styleArr[0] == 'width' ||
+                !styleArr[0]
+            ) {
+                return //continue
+            }
+            resultImg.css(styleArr[0], styleArr[1])
+        });
+        //set default position
+        resultImg.css({
+            position: 'static'
+        })
+    }
+
+
+    function updateSlickClonedImages ($img, newSrc) {
+        var fileId
+            , slider = $img.closest('.slider')
+            , clonedImgs
+
+        if (slider.length) {
+            fileId = $img.attr('src').match(/\w{32}/);
+            clonedImgs = slider.find('.slick-cloned .img_container img').each(function () {
+                var slickImg = $(this).attr('src')
+                if ( slickImg && slickImg.indexOf(fileId) != -1) {
+                    $(this).attr('src', newSrc)
+                }
+            })
+        }
+    }
+
+
+    w.__mediumStyle = {
+        renderAll: renderAll
+    }
+
+    FE.runOnObjectReady("adapterManager", function () {
+        init();
+        imageFade(true);
+        imageFade();
+    })
+
+})(window);
